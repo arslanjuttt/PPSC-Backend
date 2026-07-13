@@ -5,10 +5,12 @@ const authRoutes = require('./routes/auth.routes');
 const userRoutes = require('./routes/user.routes');
 const testRoutes = require('./routes/test.routes');
 const { errorHandler, notFoundHandler } = require('./middleware/error.middleware');
-const { getAllowedOrigins } = require('./config/client');
+
+const normalizeUrl = (url) => (url ? url.replace(/\/$/, '') : '');
+const clientUrl = normalizeUrl(process.env.CLIENT_URL || 'http://localhost:3000');
 
 const app = express();
-const allowedOrigins = getAllowedOrigins();
+const allowedOrigins = [clientUrl];
 
 app.use(helmet());
 app.use(cors({ origin: allowedOrigins }));
