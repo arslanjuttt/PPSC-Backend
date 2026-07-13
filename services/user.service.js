@@ -30,7 +30,8 @@ const sendVerificationEmailToUser = async (user) => {
 
   try {
     await sendEmailVerificationOtp(user.email, otp, user.name);
-  } catch {
+  } catch (error) {
+    console.error('Failed to send verification email:', error);
     throw new ApiError(500, 'Failed to send verification email. Please try again later.');
   }
 
@@ -87,7 +88,8 @@ const forgotPassword = async (email) => {
 
   try {
     await sendOtpEmail(email, otp);
-  } catch {
+  } catch (error) {
+    console.error('Failed to send OTP email:', error);
     throw new ApiError(500, 'Failed to send OTP email. Please try again later.');
   }
 
