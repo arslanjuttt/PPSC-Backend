@@ -5,9 +5,10 @@ const {
   buildOtpEmailHtml,
   buildOtpEmailText,
 } = require('../utils/emailTemplates');
+const { getClientUrl } = require('./client');
 
 const brandName = 'PPSC';
-const appBaseUrl = process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
+const appBaseUrl = getClientUrl();
 const logoPath = path.join(__dirname, '../assets/LoginLogo.png');
 const LOGO_CID = 'logo@ppsc';
 
@@ -40,7 +41,7 @@ const getLogoConfig = () => {
     };
   }
 
-  const publicAppUrl = process.env.APP_URL || process.env.FRONTEND_URL;
+  const publicAppUrl = getClientUrl();
   if (publicAppUrl && !/localhost|127\.0\.0\.1/i.test(publicAppUrl)) {
     return {
       logoUrl: `${publicAppUrl.replace(/\/$/, '')}/LoginLogo.png`,
