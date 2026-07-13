@@ -12,6 +12,7 @@ const brandName = 'PPSC';
 const appBaseUrl = normalizeUrl(process.env.CLIENT_URL || 'http://localhost:3000');
 const logoPath = path.join(__dirname, '../assets/LoginLogo.png');
 const LOGO_CID = 'logo@ppsc';
+const smtpPass = (process.env.SMTP_PASS || '').replace(/\s+/g, '');
 
 const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER;
 const mailFrom = process.env.SMTP_FROM_NAME
@@ -24,7 +25,7 @@ const transporter = nodemailer.createTransport({
   secure: false,
   auth: {
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    pass: smtpPass,
   },
 });
 
