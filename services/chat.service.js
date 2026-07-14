@@ -1,4 +1,4 @@
-const GEMINI_API_KEY = 'AIzaSyCKP3EHmM0iSLpOLmnsxffBIU4EwWkT1M8';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY_HERE';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 const SYSTEM_INSTRUCTION = `You are a helpful PPSC (Punjab Public Service Commission) exam preparation assistant. You help students with:
 - PPSC exam structure, syllabus, and stages (written exam, interview)
