@@ -73,7 +73,7 @@ async function generateVideoTranscript(url) {
   const apiUrl = new URL(TRANSCRIPT_API_URL);
   apiUrl.searchParams.set('video_url', url);
   apiUrl.searchParams.set('format', 'json');
-  apiUrl.searchParams.set('language', 'en');
+//   apiUrl.searchParams.set('language', 'en');
   apiUrl.searchParams.set('send_metadata', 'false');
 
   const response = await fetch(apiUrl.toString(), {

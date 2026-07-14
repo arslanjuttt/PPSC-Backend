@@ -57,6 +57,47 @@ async function extractTextFromFile(file) {
   return '';
 }
 
+async function callGemini(prompt, apiKey = process.env.GEMINI_API_KEY || GEMINI_API_KEY) {
+  if (!apiKey) {
+    const error = new Error('Gemini API key is not configured.');
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const response = await fetch(`${GEMINI_API_URL}?key=${encodeURIComponent(apiKey)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.2,
+        topK: 40,
+        topP: 0.95,
+        maxOutputTokens: 1024,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const error = new Error(`Gemini API error: ${response.status}`);
+    error.statusCode = 502;
+    error.details = errData;
+    throw error;
+  }
+
+  const data = await response.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
+
+  if (!text) {
+    const error = new Error('Empty response from Gemini');
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return text;
+}
+
 async function generateChatReply(req) {
   const apiKey = process.env.GEMINI_API_KEY || GEMINI_API_KEY;
   if (!apiKey) {
@@ -107,10 +148,8 @@ async function generateChatReply(req) {
     }
   }
 
-  const response = await fetch(`${GEMINI_API_URL}?key=${encodeURIComponent(apiKey)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  const text = await callGemini(
+    JSON.stringify({
       systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
       contents,
       generationConfig: {
@@ -119,29 +158,30 @@ async function generateChatReply(req) {
         topP: 0.95,
         maxOutputTokens: 1024,
       },
-    }),
-  });
-
-  if (!response.ok) {
-    const errData = await response.json().catch(() => ({}));
-    const error = new Error(`Gemini API error: ${response.status}`);
-    error.statusCode = 502;
-    error.details = errData;
-    throw error;
-  }
-
-  const data = await response.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
-
-  if (!text) {
-    const error = new Error('Empty response from Gemini');
-    error.statusCode = 502;
-    throw error;
-  }
+    })
+  );
 
   return { text };
 }
 
+async function translateToEnglish(text) {
+  if (typeof text !== 'string' || !text.trim()) {
+    const error = new Error('Text to translate is required.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const prompt = `Translate the following transcript fully and accurately into natural, fluent English. Output ONLY the translated English text. Do not include explanations, headings, or any text in the source language. Do not summarize. Preserve meaning and paragraph breaks.\n\n${text}`;
+  const translated = await callGemini(prompt);
+  const cleaned = translated
+    .replace(/^Here(?:'s| is)?\s+the\s+.*?translation.*?:\s*/i, '')
+    .replace(/^English\s+translation:?\s*/i, '')
+    .replace(/^Translation:?\s*/i, '')
+    .trim();
+  return { translatedText: cleaned };
+}
+
 module.exports = {
   generateChatReply,
+  translateToEnglish,
 };
