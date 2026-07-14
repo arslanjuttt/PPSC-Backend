@@ -23,11 +23,23 @@ const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.gmail.com',
   port: Number(process.env.SMTP_PORT) || 587,
   secure: false,
+  family: 4, 
   auth: {
     user: process.env.SMTP_USER,
     pass: smtpPass,
   },
 });
+
+// Verify SMTP connection when the server starts
+(async () => {
+  try {
+    await transporter.verify();
+    console.log("✅ SMTP connection successful");
+  } catch (err) {
+    console.error("❌ SMTP connection failed:");
+    console.error(err);
+  }
+})();
 
 const getLogoConfig = () => {
   if (fs.existsSync(logoPath)) {
