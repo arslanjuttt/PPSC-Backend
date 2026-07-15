@@ -1,10 +1,10 @@
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY_HERE';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY || '';
-const OPENAI_API_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/chat/completions';
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-const CHAT_PROVIDER = (process.env.CHAT_PROVIDER || 'auto').toLowerCase();
+const Groq = require('groq-sdk');
+
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
+});
+
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
 function logChatEvent(message, details = {}) {
   console.log(`[chat-api] ${message}`, JSON.stringify(details));
@@ -60,18 +60,28 @@ async function parseRequest(req) {
   return { messages, files: [] };
 }
 
+async function fileToBuffer(file) {
+  if (file?.buffer) {
+    return Buffer.from(file.buffer);
+  }
+  if (typeof file?.arrayBuffer === 'function') {
+    return Buffer.from(await file.arrayBuffer());
+  }
+  return Buffer.from([]);
+}
+
 async function fileToBase64(file) {
-  const buffer = Buffer.from(await file.arrayBuffer());
+  const buffer = await fileToBuffer(file);
   return { mimeType: normalizeMimeType(file), data: buffer.toString('base64') };
 }
 
 async function extractTextFromTxt(file) {
-  const buffer = Buffer.from(await file.arrayBuffer());
+  const buffer = await fileToBuffer(file);
   return buffer.toString('utf-8').trim();
 }
 
 async function extractTextFromPdf(file) {
-  const buffer = Buffer.from(await file.arrayBuffer());
+  const buffer = await fileToBuffer(file);
   try {
     const pdfParse = (await import('pdf-parse')).default;
     const data = await pdfParse(buffer);
@@ -91,155 +101,38 @@ async function extractTextFromFile(file) {
   return '';
 }
 
-function resolveChatProvider() {
-  if (CHAT_PROVIDER === 'openai') return 'openai';
-  if (CHAT_PROVIDER === 'gemini') return 'gemini';
-  return OPENAI_API_KEY ? 'openai' : 'gemini';
-}
-
-function getApiKeyForProvider(provider) {
-  if (provider === 'openai') {
-    return process.env.OPENAI_API_KEY || process.env.OPENAI_KEY || OPENAI_API_KEY;
-  }
-  return process.env.GEMINI_API_KEY || GEMINI_API_KEY;
-}
-
-async function callGemini(prompt, apiKey = process.env.GEMINI_API_KEY || GEMINI_API_KEY) {
-  if (!apiKey) {
-    logChatEvent('gemini-key-missing');
-    const error = new Error('Gemini API key is not configured.');
+async function callGroq(messages) {
+  if (!process.env.GROQ_API_KEY) {
+    logChatEvent('groq-key-missing');
+    const error = new Error('Groq API key is not configured.');
     error.statusCode = 503;
     throw error;
   }
 
-  logChatEvent('gemini-request-started', {
-    keySource: process.env.GEMINI_API_KEY ? 'env' : 'code',
-    keyPreview: apiKey.slice(0, 8) + '...',
-    promptLength: prompt.length,
+  logChatEvent('groq-request-started', {
+    model: GROQ_MODEL,
+    messageCount: Array.isArray(messages) ? messages.length : 0,
   });
 
-  const response = await fetch(`${GEMINI_API_URL}?key=${encodeURIComponent(apiKey)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.2,
-        topK: 40,
-        topP: 0.95,
-        maxOutputTokens: 1024,
-      },
-    }),
+  const completion = await groq.chat.completions.create({
+    model: GROQ_MODEL,
+    messages,
+    temperature: 0.7,
+    max_completion_tokens: 1024,
   });
 
-  if (!response.ok) {
-    const errData = await response.json().catch(() => ({}));
-    logChatEvent('gemini-response-error', {
-      status: response.status,
-      errorData: errData,
-    });
-
-    const message = errData?.error?.message || 'Gemini API request failed.';
-    const isQuotaError = response.status === 429 || message.toLowerCase().includes('quota') || message.toLowerCase().includes('exceeded');
-
-    const error = new Error(
-      isQuotaError
-        ? 'Gemini API quota has been exceeded. Please wait a while and try again later.'
-        : `Gemini API error: ${response.status}`
-    );
-    error.statusCode = isQuotaError ? 429 : 502;
-    error.details = errData;
-    throw error;
-  }
-
-  const data = await response.json();
-  logChatEvent('gemini-response-success', {
-    status: response.status,
-    candidateCount: data.candidates?.length || 0,
-    finishReason: data.candidates?.[0]?.finishReason || null,
-  });
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
-
-  if (!text) {
-    const error = new Error('Empty response from Gemini');
+  if (!completion?.choices?.[0]?.message?.content) {
+    const error = new Error('Empty response from Groq');
     error.statusCode = 502;
     throw error;
   }
 
-  return text;
-}
-
-async function callOpenAI(prompt, apiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY || OPENAI_API_KEY) {
-  if (!apiKey) {
-    logChatEvent('openai-key-missing');
-    const error = new Error('OpenAI API key is not configured.');
-    error.statusCode = 503;
-    throw error;
-  }
-
-  logChatEvent('openai-request-started', {
-    keySource: process.env.OPENAI_API_KEY ? 'env' : (process.env.OPENAI_KEY ? 'env' : 'code'),
-    keyPreview: apiKey.slice(0, 8) + '...',
-    promptLength: prompt.length,
-    model: OPENAI_MODEL,
+  logChatEvent('groq-response-success', {
+    model: completion.model || GROQ_MODEL,
+    choiceCount: completion.choices?.length || 0,
   });
 
-  const response = await fetch(OPENAI_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: OPENAI_MODEL,
-      messages: [
-        { role: 'system', content: SYSTEM_INSTRUCTION },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0.7,
-      max_tokens: 1024,
-    }),
-  });
-
-  if (!response.ok) {
-    const errData = await response.json().catch(() => ({}));
-    logChatEvent('openai-response-error', {
-      status: response.status,
-      errorData: errData,
-    });
-
-    const message = errData?.error?.message || 'OpenAI API request failed.';
-    const error = new Error(message);
-    error.statusCode = response.status === 429 ? 429 : 502;
-    error.details = errData;
-    throw error;
-  }
-
-  const data = await response.json();
-  logChatEvent('openai-response-success', {
-    status: response.status,
-    model: data.model || OPENAI_MODEL,
-  });
-
-  const text = data.choices?.[0]?.message?.content?.trim() ?? '';
-  if (!text) {
-    const error = new Error('Empty response from OpenAI');
-    error.statusCode = 502;
-    throw error;
-  }
-
-  return text;
-}
-
-async function callChatProvider(prompt, providerOverride = null) {
-  const provider = providerOverride || resolveChatProvider();
-  logChatEvent('chat-provider-selected', { provider });
-
-  if (provider === 'openai') {
-    return callOpenAI(prompt, getApiKeyForProvider('openai'));
-  }
-
-  return callGemini(prompt, getApiKeyForProvider('gemini'));
+  return completion.choices[0].message.content.trim();
 }
 
 async function generateChatReply(req) {
@@ -256,14 +149,14 @@ async function generateChatReply(req) {
     throw error;
   }
 
-  const contents = messages.map((m) => ({
-    role: m.role === 'user' ? 'user' : 'model',
-    parts: [{ text: m.content }],
+  const requestMessages = messages.map((m) => ({
+    role: ['user', 'assistant', 'system'].includes(m.role) ? m.role : 'user',
+    content: typeof m.content === 'string' ? m.content : String(m.content ?? ''),
   }));
 
   if (files && files.length > 0) {
-    const lastContent = contents[contents.length - 1];
-    if (lastContent?.role === 'user' && lastContent.parts[0]) {
+    const lastMessage = requestMessages[requestMessages.length - 1];
+    if (lastMessage?.role === 'user') {
       const textFiles = files.filter((f) => {
         const mime = normalizeMimeType(f);
         const fileName = normalizeFileName(f);
@@ -273,42 +166,40 @@ async function generateChatReply(req) {
         const extracted = [];
         for (const f of textFiles) {
           const text = await extractTextFromFile(f);
-          if (text) extracted.push(`[Content from ${f.name}]:\n${text}`);
+          if (text) extracted.push(`[Content from ${normalizeFileName(f)}]:\n${text}`);
         }
         if (extracted.length > 0) {
           const appended = extracted.join('\n\n---\n\n');
-          const existingText = lastContent.parts[0].text ?? '';
-          lastContent.parts[0].text = existingText ? `${existingText}\n\n${appended}` : appended;
+          const existingText = lastMessage.content ?? '';
+          lastMessage.content = existingText ? `${existingText}\n\n${appended}` : appended;
         }
       }
 
       const imageFiles = files.filter((f) => IMAGE_MIMES.includes(normalizeMimeType(f)));
       if (imageFiles.length > 0) {
-        const imageParts = await Promise.all(
-          imageFiles.map((f) => fileToBase64(f).then((b) => ({ inlineData: b })))
+        const imageDescriptions = await Promise.all(
+          imageFiles.map(async (f) => {
+            const base64 = await fileToBase64(f);
+            return `[Image attachment: ${normalizeFileName(f)}, mime: ${base64.mimeType}, data: ${base64.data}]`;
+          })
         );
-        lastContent.parts = [...lastContent.parts, ...imageParts];
+        const appended = imageDescriptions.join('\n\n');
+        lastMessage.content = lastMessage.content ? `${lastMessage.content}\n\n${appended}` : appended;
       }
     }
   }
 
+  const groqMessages = [
+    { role: 'system', content: SYSTEM_INSTRUCTION },
+    ...requestMessages,
+  ];
+
   logChatEvent('chat-prompt-prepared', {
-    messageRoles: contents.map((item) => item.role),
-    lastMessageLength: contents[contents.length - 1]?.parts?.[0]?.text?.length || 0,
+    messageRoles: groqMessages.map((item) => item.role),
+    lastMessageLength: groqMessages[groqMessages.length - 1]?.content?.length || 0,
   });
 
-  const text = await callChatProvider(
-    JSON.stringify({
-      systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-      contents,
-      generationConfig: {
-        temperature: 0.7,
-        topK: 40,
-        topP: 0.95,
-        maxOutputTokens: 1024,
-      },
-    })
-  );
+  const text = await callGroq(groqMessages);
 
   return { text };
 }
@@ -325,7 +216,10 @@ async function translateToEnglish(text) {
   });
 
   const prompt = `Translate the following transcript fully and accurately into natural, fluent English. Output ONLY the translated English text. Do not include explanations, headings, or any text in the source language. Do not summarize. Preserve meaning and paragraph breaks.\n\n${text}`;
-  const translated = await callChatProvider(prompt);
+  const translated = await callGroq([
+    { role: 'system', content: SYSTEM_INSTRUCTION },
+    { role: 'user', content: prompt },
+  ]);
   const cleaned = translated
     .replace(/^Here(?:'s| is)?\s+the\s+.*?translation.*?:\s*/i, '')
     .replace(/^English\s+translation:?\s*/i, '')
