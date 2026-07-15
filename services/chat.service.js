@@ -22,24 +22,47 @@ const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const PDF_MIME = 'application/pdf';
 const TXT_MIME = 'text/plain';
 
+function normalizeFileName(file = {}) {
+  const name = file?.originalname || file?.name || '';
+  return typeof name === 'string' ? name : String(name ?? '');
+}
+
+function normalizeMimeType(file = {}) {
+  const mime = file?.mimetype || file?.type || '';
+  return typeof mime === 'string' ? mime.toLowerCase() : String(mime ?? '').toLowerCase();
+}
+
 async function parseRequest(req) {
   const contentType = req.headers['content-type'] || '';
   if (typeof contentType === 'string' && contentType.includes('multipart/form-data')) {
-    const formData = req.body;
-    const messagesJson = formData?.messages;
-    const messages = messagesJson ? JSON.parse(messagesJson) : [];
-    const files = Array.isArray(formData?.files) ? formData.files : [];
+    const body = req.body || {};
+    const rawMessages = body.messages;
+    let messages = [];
+
+    if (typeof rawMessages === 'string') {
+      try {
+        messages = JSON.parse(rawMessages);
+      } catch (error) {
+        messages = [];
+      }
+    } else if (Array.isArray(rawMessages)) {
+      messages = rawMessages;
+    }
+
+    const uploadedFiles = req.files?.files || req.files || [];
+    const files = Array.isArray(uploadedFiles) ? uploadedFiles : [uploadedFiles].filter(Boolean);
+
     return { messages, files };
   }
 
   const body = req.body || {};
-  const messages = body.messages || [];
+  const messages = Array.isArray(body.messages) ? body.messages : [];
   return { messages, files: [] };
 }
 
 async function fileToBase64(file) {
   const buffer = Buffer.from(await file.arrayBuffer());
-  return { mimeType: file.type, data: buffer.toString('base64') };
+  return { mimeType: normalizeMimeType(file), data: buffer.toString('base64') };
 }
 
 async function extractTextFromTxt(file) {
@@ -55,14 +78,16 @@ async function extractTextFromPdf(file) {
     const text = data && typeof data === 'object' && 'text' in data ? data.text : '';
     return typeof text === 'string' ? text.trim() : '';
   } catch (e) {
-    console.warn('PDF parse failed for', file.name, e);
+    console.warn('PDF parse failed for', normalizeFileName(file), e);
     return '';
   }
 }
 
 async function extractTextFromFile(file) {
-  if (file.type === PDF_MIME) return extractTextFromPdf(file);
-  if (file.type === TXT_MIME || file.name.toLowerCase().endsWith('.txt')) return extractTextFromTxt(file);
+  const mime = normalizeMimeType(file);
+  const fileName = normalizeFileName(file);
+  if (mime === PDF_MIME) return extractTextFromPdf(file);
+  if (mime === TXT_MIME || fileName.toLowerCase().endsWith('.txt')) return extractTextFromTxt(file);
   return '';
 }
 
@@ -218,13 +243,6 @@ async function callChatProvider(prompt, providerOverride = null) {
 }
 
 async function generateChatReply(req) {
-  const apiKey = process.env.GEMINI_API_KEY || GEMINI_API_KEY;
-  if (!apiKey) {
-    const error = new Error('Gemini API key is not configured.');
-    error.statusCode = 503;
-    throw error;
-  }
-
   const { messages, files } = await parseRequest(req);
   logChatEvent('chat-request-received', {
     contentType: req.headers['content-type'] || 'unknown',
@@ -246,9 +264,11 @@ async function generateChatReply(req) {
   if (files && files.length > 0) {
     const lastContent = contents[contents.length - 1];
     if (lastContent?.role === 'user' && lastContent.parts[0]) {
-      const textFiles = files.filter(
-        (f) => f.type === PDF_MIME || f.type === TXT_MIME || f.name.toLowerCase().endsWith('.txt')
-      );
+      const textFiles = files.filter((f) => {
+        const mime = normalizeMimeType(f);
+        const fileName = normalizeFileName(f);
+        return mime === PDF_MIME || mime === TXT_MIME || fileName.toLowerCase().endsWith('.txt');
+      });
       if (textFiles.length > 0) {
         const extracted = [];
         for (const f of textFiles) {
@@ -262,7 +282,7 @@ async function generateChatReply(req) {
         }
       }
 
-      const imageFiles = files.filter((f) => IMAGE_MIMES.includes(f.type));
+      const imageFiles = files.filter((f) => IMAGE_MIMES.includes(normalizeMimeType(f)));
       if (imageFiles.length > 0) {
         const imageParts = await Promise.all(
           imageFiles.map((f) => fileToBase64(f).then((b) => ({ inlineData: b })))
