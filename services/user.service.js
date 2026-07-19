@@ -178,7 +178,29 @@ const recordTestResult = async (
 
   const total = stats.correctAnswers + stats.incorrectAnswers;
   stats.accuracy = total > 0 ? Math.round((stats.correctAnswers / total) * 100) : 0;
-  stats.streak = score >= 50 ? (stats.streak || 0) + 1 : 0;
+
+  const now = new Date();
+  const currentDay = now.toISOString().slice(0, 10);
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const yesterdayDay = yesterday.toISOString().slice(0, 10);
+  const lastPassDate = stats.lastPassDate || null;
+
+  if (score >= 50) {
+    if (lastPassDate === currentDay) {
+      // already counted today
+      stats.streak = stats.streak || 1;
+    } else if (lastPassDate === yesterdayDay && stats.streak > 0) {
+      stats.streak = (stats.streak || 0) + 1;
+    } else {
+      stats.streak = 1;
+    }
+    stats.lastPassDate = currentDay;
+  } else {
+    if (lastPassDate !== currentDay) {
+      stats.streak = 0;
+    }
+  }
 
   user.stats = stats;
   await user.save();

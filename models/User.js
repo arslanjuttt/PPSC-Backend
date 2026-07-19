@@ -22,6 +22,7 @@ const userSchema = new mongoose.Schema(
       incorrectAnswers: { type: Number, default: 0 },
       streak: { type: Number, default: 0 },
       lastScore: { type: Number, default: 0 },
+      lastPassDate: { type: String, default: null },
       accuracy: { type: Number, default: 0 },
     },
   },
